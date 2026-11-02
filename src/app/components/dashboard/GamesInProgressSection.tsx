@@ -37,7 +37,7 @@ function GamesInProgressSection({gameHistory, user}: { gameHistory?: any[], user
                                     <p className="xl:text-xs text-gray-500">({opponent?.elo})</p>
                                 </div>
                             </div>
-                            <Link href={`/games/${game.id}`} className="btn btn-primary btn-sm w-full mt-2">Rejoindre</Link>
+                            <Link href={game.guest ? `/games/guest/${game.id}` : `/games/${game.id}`} className="btn btn-primary btn-sm w-full mt-2">Rejoindre</Link>
                         </li>
                     );
                 })}

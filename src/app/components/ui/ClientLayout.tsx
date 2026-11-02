@@ -3,6 +3,7 @@
 import {Sidebar, MenuOpener} from "@/app/components/ui/Sidebar";
 import ThemeProvider from "@/app/components/ui/ThemeProvider";
 import {useSession} from "@/lib/auth-client";
+import {GuestProvider} from "@/lib/guest/GuestProvider";
 import FullScreenLoader from "@/app/utils/FullScreenLoader";
 import {usePathname, useRouter} from "next/navigation";
 import {useEffect} from "react";
@@ -51,6 +52,10 @@ function AuthGuard({children}: { children: React.ReactNode }) {
     );
 }
 
-export default function ClientLayout({children}: { children: React.ReactNode }) {
-    return <AuthGuard>{children}</AuthGuard>;
+export default function ClientLayout({children, dbConfigured}: { children: React.ReactNode, dbConfigured: boolean }) {
+    return (
+        <GuestProvider dbConfigured={dbConfigured}>
+            <AuthGuard>{children}</AuthGuard>
+        </GuestProvider>
+    );
 }

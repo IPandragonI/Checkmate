@@ -32,6 +32,17 @@ Events published on the channel: `start`, `move`, `gameOver`, `message`. Clients
 
 Bot games run the engine in the browser, but each move is still validated and persisted by the server, and a bot move is only accepted on the bot's turn.
 
+## Running without a database (guest mode)
+
+The app can run entirely in the browser, with no database and no account:
+
+- **Automatic:** when `DATABASE_URL` is not set, every visitor is a guest.
+- **Opt-in:** with a database, the home page offers "Jouer en invité".
+
+In guest mode you can play against the bots and solve puzzles. Games, clocks, puzzle progress, profile and theme are stored in `localStorage` (Profile → *Réinitialiser les données invité* wipes them). Online games, accounts, Elo and the leaderboard need the database and are hidden.
+
+How it works: `apiFetch` (`src/lib/api.ts`) answers the app's own `/api/*` calls from `src/lib/guest/` when guest mode is active. Bot games use a browser-side engine (`src/lib/guest/engine.ts`) that applies the same rules as the server. The bundled puzzle set is small (`src/lib/guest/puzzles.ts`); add entries there to extend it.
+
 ## Local development
 
 ```bash

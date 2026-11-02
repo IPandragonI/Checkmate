@@ -1,14 +1,20 @@
+"use client";
+
 import Link from "next/link";
+import {useGuest} from "@/lib/guest/GuestProvider";
 import {APP_TITLE} from "@/lib/constants";
 import {Crown, Menu, Swords, UsersRound, Star, BookOpen, BadgeQuestionMark, Puzzle} from 'lucide-react';
 
 function Sidebar({children}: { children: React.ReactNode }) {
-    const menuItems = [
+    const {isGuest} = useGuest();
+    const allMenuItems = [
         {name: "Créer une partie", href: "/games/create", icon: Swords},
         {name: "Rejoindre une partie", href: "/games/join", icon: UsersRound},
         {name: "Problèmes", href: "/puzzles", icon: Puzzle},
         {name: "Classement", href: "/leaderboard", icon: Star},
     ];
+    // Online play and the leaderboard need the database
+    const menuItems = isGuest ? allMenuItems.filter((item) => item.href !== "/games/join" && item.href !== "/leaderboard") : allMenuItems;
 
     const bottomMenuItems = [
         {name: "Règles", href: "/rules", icon: BookOpen},
@@ -30,6 +36,7 @@ function Sidebar({children}: { children: React.ReactNode }) {
                             <span className="text-2xl font-extrabold text-primary tracking-wide">{APP_TITLE}</span>
                         </Link>
                     </li>
+                    {isGuest && <li className="text-center"><span className="badge badge-outline badge-secondary mx-auto">Mode invité · hors ligne</span></li>}
                     <div className="divider my-2"></div>
                     <section className="flex flex-col justify-between flex-1">
                         <div>

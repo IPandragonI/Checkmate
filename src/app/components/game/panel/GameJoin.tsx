@@ -3,6 +3,7 @@
 import {useState} from "react";
 import GameJoinField from "@/app/components/field/GameJoinField";
 import {useRouter} from "next/navigation";
+import {useGuest} from "@/lib/guest/GuestProvider";
 
 
 const GameJoin = () => {
@@ -10,6 +11,7 @@ const GameJoin = () => {
     const [code, setCode] = useState("");
     const [error, setError] = useState("");
     const router = useRouter();
+    const {isGuest} = useGuest();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -27,6 +29,10 @@ const GameJoin = () => {
             setLoading(false);
         }
     };
+
+    if (isGuest) {
+        return <p className="text-center">Les parties en ligne ne sont pas disponibles en mode invité. Créez une partie contre un bot depuis « Créer une partie ».</p>;
+    }
 
     return (
         <form className="flex flex-col justify-between h-full" onSubmit={handleSubmit}>

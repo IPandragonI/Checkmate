@@ -1,7 +1,11 @@
+"use client";
+
 import Link from "next/link";
+import {useGuest} from "@/lib/guest/GuestProvider";
 import {Swords, UsersRound} from "lucide-react";
 
 function TopSection({user}: { user?: any }) {
+    const {isGuest} = useGuest();
     return (
         <div className="bg-base-200 rounded-xl h-32 flex text-2xl font-bold p-6">
             <div className="flex flex-col justify-center flex-1">
@@ -17,10 +21,12 @@ function TopSection({user}: { user?: any }) {
                     <div className="hidden md:block">Créer une partie</div>
                     <Swords className="md:hidden" size={20}/>
                 </Link>
-                <Link className="btn btn-secondary w-full" href={"/games/join"}>
-                    <div className="hidden md:block">Rejoindre une partie</div>
-                    <UsersRound className="md:hidden" size={20}/>
-                </Link>
+                {!isGuest && (
+                    <Link className="btn btn-secondary w-full" href={"/games/join"}>
+                        <div className="hidden md:block">Rejoindre une partie</div>
+                        <UsersRound className="md:hidden" size={20}/>
+                    </Link>
+                )}
             </div>
         </div>
     );

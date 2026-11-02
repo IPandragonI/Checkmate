@@ -1,5 +1,6 @@
 "use client";
 
+import {apiFetch} from "@/lib/api";
 import React, {useEffect, useState, useCallback, useRef} from "react";
 import GameLayout from "@/app/components/game/GameLayout";
 import PuzzleInfos from "@/app/components/game/panel/PuzzleInfos";
@@ -66,7 +67,7 @@ export const PuzzlePlayer: React.FC<Props> = ({themeCategory}) => {
     const fetchNext = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetch('/api/puzzles/next?themeCategory=' + themeCategory)
+            const res = await apiFetch('/api/puzzles/next?themeCategory=' + themeCategory)
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
                 setErrorMessage(err.error || "Erreur lors du chargement du puzzle.");
@@ -115,7 +116,7 @@ export const PuzzlePlayer: React.FC<Props> = ({themeCategory}) => {
 
     async function updatePuzzle(puzzleId: string, solved: boolean = false) {
         try {
-            const res = await fetch('/api/puzzles/update', {
+            const res = await apiFetch('/api/puzzles/update', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({puzzleId: puzzleId, solved}),
@@ -251,7 +252,7 @@ export const PuzzlePlayer: React.FC<Props> = ({themeCategory}) => {
 
     const fullResetPuzzles = useCallback(async () => {
         try {
-            const res = await fetch('/api/puzzles/reset', {
+            const res = await apiFetch('/api/puzzles/reset', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
             });

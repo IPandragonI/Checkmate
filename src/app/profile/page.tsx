@@ -1,13 +1,16 @@
 "use client";
 
+import {apiFetch} from "@/lib/api";
 import {useEffect, useState} from "react";
 import {useSession} from "@/lib/auth-client";
+import {useGuest} from "@/lib/guest/GuestProvider";
 import FullScreenLoader from "@/app/utils/FullScreenLoader";
 import Footer from "@/app/components/ui/Footer";
 import {sendVerificationEmail} from "@/lib/auth-client";
 
 export default function ProfilePage() {
     const {data: session, isPending} = useSession();
+    const {isGuest, resetGuestData} = useGuest();
     const [error, setError] = useState<string | null>(null);
     const [theme, setTheme] = useState<string>("light");
     const [loadingPref, setLoadingPref] = useState(true);
@@ -25,7 +28,7 @@ export default function ProfilePage() {
         async function fetchPreference() {
             setLoadingPref(true);
             try {
-                const res = await fetch("/api/user-preference");
+                const res = await apiFetch("/api/user-preference");
                 if (!res.ok) throw new Error("Erreur lors de la récupération des préférences");
                 const data = await res.json();
                 if (data.preference?.theme) {
@@ -54,7 +57,7 @@ export default function ProfilePage() {
         setSuccess(false);
         setError(null);
         try {
-            const res = await fetch("/api/user-preference", {
+            const res = await apiFetch("/api/user-preference", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ theme }),
@@ -94,7 +97,7 @@ export default function ProfilePage() {
         setSaving(true);
         setError(null);
         try {
-            const res = await fetch('/api/user', {
+            const res = await apiFetch('/api/user', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: userName, username: userUsername, image: userImage })
@@ -249,6 +252,15 @@ export default function ProfilePage() {
                     )}
                 </div>
             </div>
+            {isGuest && (
+                <div className="flex flex-col gap-3 p-6 rounded-xl bg-base-200 shadow w-full">
+                    <h2 className="text-lg font-semibold">Mode invité</h2>
+                    <p className="text-sm text-slate-500">Vos parties, vos problèmes résolus et vos préférences sont enregistrés uniquement dans ce navigateur.</p>
+                    <button className="btn btn-error btn-outline w-fit" onClick={() => { if (window.confirm("Supprimer toutes les données invité de cet appareil ?")) resetGuestData(); }}>
+                        Réinitialiser les données invité
+                    </button>
+                </div>
+            )}
             <Footer />
         </main>
     );

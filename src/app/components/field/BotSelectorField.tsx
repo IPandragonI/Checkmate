@@ -1,3 +1,4 @@
+import {apiFetch} from "@/lib/api";
 import React, { useState, useEffect } from "react";
 import {Svg} from "@/app/utils/Svg";
 import {Bot} from "@/app/types/game";
@@ -13,7 +14,7 @@ const BotSelectorField: React.FC<BotSelectorProps> = ({botId, setBotId}) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch("/api/bots")
+        apiFetch("/api/bots")
             .then(res => res.json())
             .then(data => {
                 setBots(data);

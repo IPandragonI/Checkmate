@@ -1,5 +1,6 @@
 "use client";
 
+import {apiFetch} from "@/lib/api";
 import {useSession} from "@/lib/auth-client";
 import FullScreenLoader from "@/app/utils/FullScreenLoader";
 import {useEffect, useState} from "react";
@@ -18,7 +19,7 @@ export default function LeaderboardPage() {
     useEffect(() => {
         if (!session?.user?.id) return;
         setLoading(true);
-        fetch('/api/leaderboard')
+        apiFetch('/api/leaderboard')
             .then(res => res.json())
             .then(data => {
                 setUser(data.user);

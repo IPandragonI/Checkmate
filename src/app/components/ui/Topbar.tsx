@@ -5,12 +5,19 @@ import Link from "next/link";
 import {useSession, signOut} from "@/lib/auth-client";
 import Swal from 'sweetalert2'
 import {useRouter} from "next/navigation";
+import {useGuest} from "@/lib/guest/GuestProvider";
 
 export default function Topbar() {
     const {user} = useSession().data || {};
     const router = useRouter();
+    const {isGuest, dbAvailable, exitGuest} = useGuest();
 
     function handleLogout() {
+        if (isGuest) {
+            exitGuest();
+            router.push("/");
+            return;
+        }
         Swal.fire({
             title: 'Déconnexion',
             text: 'Voulez-vous vraiment vous déconnecter ?',
@@ -49,9 +56,11 @@ export default function Topbar() {
                         <ul tabIndex={0}
                             className="menu menu-sm dropdown-content bg-base-100 rounded-box z-1 mt-3 w-52 p-2 shadow">
                             <li><Link href="/profile">Profil</Link></li>
-                            <li>
-                                <button onClick={handleLogout}>Se déconnecter</button>
-                            </li>
+                            {(!isGuest || dbAvailable) && (
+                                <li>
+                                    <button onClick={handleLogout}>{isGuest ? "Quitter le mode invité" : "Se déconnecter"}</button>
+                                </li>
+                            )}
                         </ul>
                     </div>
                 )}

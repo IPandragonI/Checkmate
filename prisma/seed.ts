@@ -1,4 +1,5 @@
 import {PrismaClient} from '@prisma/client';
+import {BOT_DEFINITIONS} from '../src/lib/bots-data';
 const prisma = new PrismaClient();
 const p = prisma as any;
 
@@ -7,12 +8,7 @@ async function seedBots() {
         console.log("Bots already seeded");
         return;
     }
-    const bots = [
-        {username: "Bob", label: "Facile", elo: 400, img: "/bot/bob.svg"},
-        {username: "Ethan", label: "Moyen", elo: 800, img: "/bot/ethan.svg"},
-        {username: "Sophia", label: "Avancé", elo: 1400, img: "/bot/sophia.svg"},
-        {username: "Magnus", label: "Impossible", elo: 2000, img: "/bot/magnus.svg"}
-    ];
+    const bots = BOT_DEFINITIONS;
 
     for (const bot of bots) {
         await p.bot.upsert({

@@ -1,7 +1,12 @@
 import "./globals.css";
+import {connection} from "next/server";
 import ClientLayout from "@/app/components/ui/ClientLayout";
 
-export default function Layout({children}: { children: React.ReactNode }) {
+export default async function Layout({children}: { children: React.ReactNode }) {
+    // Read at request time (not build time): without DATABASE_URL the app runs in browser-only guest mode.
+    await connection();
+    const dbConfigured = !!process.env.DATABASE_URL;
+
     return (
         <html lang="fr">
         <head>
@@ -11,7 +16,7 @@ export default function Layout({children}: { children: React.ReactNode }) {
             <link rel="icon" href="/favicon.ico"/>
         </head>
         <body>
-        <ClientLayout>{children}</ClientLayout>
+        <ClientLayout dbConfigured={dbConfigured}>{children}</ClientLayout>
         </body>
         </html>
     );

@@ -1,3 +1,4 @@
+import {apiFetch} from "@/lib/api";
 import {useSession} from "@/lib/auth-client";
 import FullScreenLoader from "@/app/utils/FullScreenLoader";
 import {useEffect, useState} from "react";
@@ -21,7 +22,7 @@ const Dashboard = () => {
     useEffect(() => {
         if (!session?.user?.id) return;
         setLoading(true);
-        fetch('/api/user')
+        apiFetch('/api/user')
             .then(res => res.json())
             .then(data => {
                 setUser(data.user);

@@ -1,5 +1,6 @@
 "use client";
 
+import {apiFetch} from "@/lib/api";
 import React, {useState} from 'react';
 import Footer from '@/app/components/ui/Footer';
 
@@ -26,7 +27,7 @@ export default function ContactPage() {
 
         setLoading(true);
         try {
-            const res = await fetch('/api/send-email', {
+            const res = await apiFetch('/api/send-email', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({subject: subject, text: message}),

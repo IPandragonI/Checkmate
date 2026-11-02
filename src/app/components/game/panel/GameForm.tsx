@@ -1,7 +1,9 @@
 "use client";
 
+import {apiFetch} from "@/lib/api";
 import BotSelector from "@/app/components/field/BotSelectorField";
-import {useState} from "react";
+import {useEffect, useState} from "react";
+import {useGuest} from "@/lib/guest/GuestProvider";
 import Swal from "sweetalert2";
 import {useRouter} from "next/navigation";
 import GameModeField from "@/app/components/field/GameModeField";
@@ -17,6 +19,11 @@ const GameForm = () => {
     const [botId, setBotId] = useState("");
     const [timeMode, setTimeMode] = useState("RAPID");
     const router = useRouter();
+    const {isGuest} = useGuest();
+
+    useEffect(() => {
+        if (isGuest) setMode("bot");
+    }, [isGuest]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -31,14 +38,14 @@ const GameForm = () => {
             if (mode === "bot") {
                 payload.botId = botId;
             }
-            const res = await fetch("/api/games/create", {
+            const res = await apiFetch("/api/games/create", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(payload),
             });
             const data = await res.json();
             if (!res.ok || !data.gameId) throw new Error(data.error || "Erreur lors de la création de la partie");
-            router.push(`/games/${data.gameId}`);
+            router.push(data.guest ? `/games/guest/${data.gameId}` : `/games/${data.gameId}`);
             if (mode === "online") {
                 try {
                     await navigator.clipboard.writeText(data.code);
@@ -68,7 +75,7 @@ const GameForm = () => {
         <form className="flex flex-col justify-between h-full" onSubmit={handleSubmit}>
             <div className={"flex flex-col gap-6"}>
                 <h1 className="text-3xl font-bold text-center">Nouvelle partie</h1>
-                <GameModeField mode={mode} onClick={() => setMode("online")} onClick1={() => setMode("bot")}/>
+                <GameModeField onlineDisabled={isGuest} mode={mode} onClick={() => setMode("online")} onClick1={() => setMode("bot")}/>
                 {mode === "bot" && (
                     <>
                         <BotSelector botId={botId} setBotId={setBotId}/>
