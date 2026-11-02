@@ -11,7 +11,7 @@ interface GameInfosProps {
     moves: any[];
     chatMessages?: any[];
     isReconnecting?: boolean;
-    socket?: any;
+    onChatMessage?: (message: any) => void;
 }
 
 const GameInfos: React.FC<GameInfosProps> = ({
@@ -22,7 +22,7 @@ const GameInfos: React.FC<GameInfosProps> = ({
                                                  moves,
                                                  chatMessages,
                                                  isReconnecting,
-                                                 socket
+                                                 onChatMessage
                                              }) => {
     let adversaire = null;
     let adversaireImg = null;
@@ -32,11 +32,11 @@ const GameInfos: React.FC<GameInfosProps> = ({
         adversaire = game.bot.username;
         adversaireImg = game.bot.img;
         adversaireElo = game.bot.elo;
-    } else if (user?.id === playerWhite.id && playerBlack?.id) {
+    } else if (user?.id === playerWhite?.id && playerBlack?.id) {
         adversaire = playerBlack.username;
         adversaireImg = playerBlack.image;
         adversaireElo = playerBlack.elo;
-    } else if (user?.id === playerBlack.id && playerWhite?.id) {
+    } else if (user?.id === playerBlack?.id && playerWhite?.id) {
         adversaire = playerWhite.username;
         adversaireImg = playerWhite.image;
         adversaireElo = playerWhite.elo;
@@ -80,8 +80,9 @@ const GameInfos: React.FC<GameInfosProps> = ({
                         <>
                             <input type="radio" name="my_tabs_3" className="tab" aria-label="Messages"/>
                             <div className="tab-content bg-base-100 p-6 overflow-y-auto h-full">
-                                <GameChat socket={socket} gameId={game.id} user={user}
-                                          chatMessages={chatMessages || []}/>
+                                <GameChat gameId={game.id} user={user}
+                                          messages={chatMessages || []}
+                                          onMessageSent={(m) => onChatMessage?.(m)}/>
                             </div>
                         </>
                     )}

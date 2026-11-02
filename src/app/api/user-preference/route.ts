@@ -1,37 +1,30 @@
-import {NextRequest, NextResponse} from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
-import {getUserFromRequest} from "@/app/api/utils/auth";
+import { getUserFromRequest, parseJson, unauthorized } from "@/app/api/utils/http";
 
-export async function GET(request: NextRequest) {
+const schema = z.object({ theme: z.string().regex(/^[a-z0-9_-]{1,32}$/, "Thème invalide") });
+
+export async function GET() {
     const user = await getUserFromRequest();
-    if (!user?.id) {
-        return NextResponse.json({error: "Non authentifié"}, {status: 401});
-    }
-    const pref = await prisma.userPreference.findUnique({
-        where: {userId: user.id},
-    });
-    return NextResponse.json({preference: pref});
+    if (!user?.id) return unauthorized();
+
+    const preference = await prisma.userPreference.findUnique({ where: { userId: user.id } });
+    return NextResponse.json({ preference });
 }
 
 export async function POST(request: NextRequest) {
     const user = await getUserFromRequest();
-    if (!user?.id) {
-        return NextResponse.json({error: "Non authentifié"}, {status: 401});
-    }
-    const body = await request.json();
-    const {theme} = body;
-    let pref = await prisma.userPreference.findUnique({
-        where: {userId: user.id},
+    if (!user?.id) return unauthorized();
+
+    const parsed = await parseJson(request, schema);
+    if (!parsed.ok) return parsed.res;
+    const { theme } = parsed.data;
+
+    const preference = await prisma.userPreference.upsert({
+        where: { userId: user.id },
+        update: { theme },
+        create: { userId: user.id, theme },
     });
-    if (pref) {
-        pref = await prisma.userPreference.update({
-            where: {userId: user.id},
-            data: {theme},
-        });
-    } else {
-        pref = await prisma.userPreference.create({
-            data: {userId: user.id, theme},
-        });
-    }
-    return NextResponse.json({preference: pref});
+    return NextResponse.json({ preference });
 }

@@ -53,7 +53,6 @@ const ChessboardWrapper: React.FC<ChessboardWrapperProps> = ({
     const [optionSquares, setOptionSquares] = useState<Record<string, React.CSSProperties>>({});
     const [arrows, setArrows] = useState<Array<{startSquare: Square, endSquare: Square, color: string}>>([]);
     const lastArrowsJsonRef = useRef<string>('');
-    const [firstMoveMade, setFirstMoveMade] = useState(false);
 
     const boardStyles = getBoardStyles();
 
@@ -67,20 +66,18 @@ const ChessboardWrapper: React.FC<ChessboardWrapperProps> = ({
             console.error('Failed to load FEN in ChessboardWrapper', e);
         }
 
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentFen, resetKey]);
 
      
+    // The bot plays whenever it is its turn (first move, reload mid-game, retry after a failed save).
     useEffect(() => {
-        if (typeof window === 'undefined') return;
-        const GLOBAL_FLAG = '__checkmate_bot_first_move_done';
-        if ((window as any)[GLOBAL_FLAG]) return;
-
-        if (botElo && !isOnline && !canPlay && isBotTurn && !firstMoveMade && chessGame.fen() === DEFAULT_FEN) {
-            (window as any)[GLOBAL_FLAG] = true;
-            setFirstMoveMade(true);
-            setTimeout(makeBotMove, 500);
-        }
-    }, [botElo, isOnline, canPlay, isBotTurn, firstMoveMade, chessGame]);
+        if (!botElo || isOnline || isStatic || !isBotTurn) return;
+        const delay = chessGame.fen() === DEFAULT_FEN ? 500 : Math.random() * (3000 - 800) + 800;
+        const timer = setTimeout(makeBotMove, delay);
+        return () => clearTimeout(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [botElo, isOnline, isStatic, isBotTurn, currentFen, resetKey]);
 
     useEffect(() => {
         const merged: Record<string, React.CSSProperties> = {};
@@ -275,8 +272,6 @@ const ChessboardWrapper: React.FC<ChessboardWrapperProps> = ({
                  capturedPiece: move?.captured
              }, false);
 
-             const botMoveDelay = Math.random() * (3000 - 800) + 800;
-             if (!isOnline && botElo) setTimeout(makeBotMove, botMoveDelay);
          } catch {
              const hasMoveOptions = getMoveOptions(square as Square);
 
@@ -320,9 +315,6 @@ const ChessboardWrapper: React.FC<ChessboardWrapperProps> = ({
              setMoveFrom('');
              setMoveOptionSquares({});
 
-             const botMoveDelay = Math.random() * (3000 - 800) + 800;
-             if (!isOnline && botElo) setTimeout(makeBotMove, botMoveDelay);
-
              return true;
          } catch {
              return false;
@@ -336,7 +328,7 @@ const ChessboardWrapper: React.FC<ChessboardWrapperProps> = ({
         arrows: arrows,
         showAnimations: showAnimations,
         id: 'click-or-drag-to-move',
-        allowDragging: canPlay && (!isOnline || isBotTurn) && !isStatic,
+        allowDragging: canPlay && !isBotTurn && !isStatic,
         boardOrientation: boardOrientation,
     };
 
@@ -344,7 +336,7 @@ const ChessboardWrapper: React.FC<ChessboardWrapperProps> = ({
         Object.assign(chessboardOptions, {
             onSquareClick: onSquareClick,
             onPieceDrop: onPieceDrop,
-             arePiecesDraggable: canPlay && (!isOnline || isBotTurn),
+             arePiecesDraggable: canPlay && !isBotTurn,
         });
     }
 

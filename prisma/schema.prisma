@@ -4,7 +4,8 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -30,6 +31,7 @@ model User {
   preference UserPreference?
   UserPuzzle UserPuzzle[]
 
+  @@index([elo])
   @@map("User")
 }
 
@@ -103,10 +105,15 @@ model Game {
 
   createdAt  DateTime      @default(now())
   finishedAt DateTime?
+  lastMoveAt DateTime?
   moves      Move[]
   messages   ChatMessage[]
 
   RatingHistory RatingHistory[]
+
+  @@index([playerWhiteId])
+  @@index([playerBlackId])
+  @@index([status])
 }
 
 model Move {
@@ -123,7 +130,7 @@ model Move {
   fen       String
   timestamp DateTime @default(now())
 
-  @@index([gameId, moveNumber])
+  @@unique([gameId, moveNumber])
 }
 
 model ChatMessage {
@@ -134,6 +141,8 @@ model ChatMessage {
   userId  String
   message String
   sentAt  DateTime @default(now())
+
+  @@index([gameId, sentAt])
 }
 
 model RatingHistory {
@@ -145,6 +154,8 @@ model RatingHistory {
   oldElo    Int
   newElo    Int
   createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model UserPreference {

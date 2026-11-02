@@ -1,3 +1,4 @@
+import {getOutcomeForUser} from "@/app/games/utils/outcome";
 import {timeModes} from "@/app/types/game";
 import {Svg} from "@/app/utils/Svg";
 import {GameResult} from "@prisma/client";
@@ -32,8 +33,7 @@ function GameHistorySection({gameHistory, user}: { gameHistory?: any[], user?: a
                     if (game.status !== 'FINISHED') return null;
                     const playerWhite = game.playerWhite ? game.playerWhite : game.bot;
                     const playerBlack = game.playerBlack ? game.playerBlack : game.bot;
-                    const gameResultForUser = (game.winnerId === user?.id) ? 'WIN' :
-                        (game.winnerId && game.winnerId !== user?.id) ? 'LOSS' : 'DRAW';
+                    const gameResultForUser = getOutcomeForUser(game, user?.id);
                     const modeIcon = getTimeModeIcon(modeObj.key);
                     return (
                         <tr key={game.id || idx}>
@@ -76,7 +76,7 @@ function GameHistorySection({gameHistory, user}: { gameHistory?: any[], user?: a
                                     </span>
                                 </div>
                             </td>
-                            <td className="py-2 px-2">{game.moves.length}</td>
+                            <td className="py-2 px-2">{game._count?.moves ?? game.moves?.length ?? 0}</td>
                             <td className="py-2 px-2">{game.finishedAt ? new Date(game.finishedAt).toLocaleDateString('fr-FR') : '-'}</td>
                         </tr>
                     );

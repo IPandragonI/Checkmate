@@ -1,5 +1,5 @@
 import {Award, Heart, Swords, Puzzle} from "lucide-react";
-import {GameResult} from "@prisma/client";
+import {getOutcomeForUser} from "@/app/games/utils/outcome";
 import {timeModes, PUZZLE_THEMES} from "@/app/types/game";
 
 function StatisticsSection({gameHistory, user, puzzleHistory}: {
@@ -8,9 +8,10 @@ function StatisticsSection({gameHistory, user, puzzleHistory}: {
     puzzleHistory: any[]
 }) {
     const totalGames = gameHistory.filter(g => g.status === "FINISHED").length;
-    const wins = gameHistory.filter(g => g.status === "FINISHED" && g.result === GameResult.WHITE_WIN && g.playerWhiteId === user?.id || g.result === GameResult.BLACK_WIN && g.playerBlackId === user?.id).length;
-    const losses = gameHistory.filter(g => g.status === "FINISHED" && g.result !== "draw" && !((g.result === GameResult.WHITE_WIN && g.playerWhiteId === user?.id) || (g.result === GameResult.BLACK_WIN && g.playerBlackId === user?.id))).length;
-    const draws = gameHistory.filter(g => g.status === "FINISHED" && g.result !== GameResult.WHITE_WIN && g.result !== GameResult.BLACK_WIN).length;
+        const finished = gameHistory.filter(g => g.status === "FINISHED");
+    const wins = finished.filter(g => getOutcomeForUser(g, user?.id) === "WIN").length;
+    const losses = finished.filter(g => getOutcomeForUser(g, user?.id) === "LOSS").length;
+    const draws = finished.filter(g => getOutcomeForUser(g, user?.id) === "DRAW").length;
     const winRate = totalGames > 0 ? ((wins / totalGames) * 100).toFixed(1) : "0"
     const favoriteMode = gameHistory
         .filter(g => g.status === "FINISHED" && (g.playerWhiteId === user?.id || g.playerBlackId === user?.id))

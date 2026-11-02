@@ -1,21 +1,54 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
-import {Chess, Square} from "chess.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Chess, Square } from "chess.js";
 import { useSession } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
-import { getSocket } from "@/socket";
+import { gameChannelName, getPusherClient } from "@/lib/pusher-client";
 import ChessboardWrapper from "@/app/components/chessBoard/ChessboardWrapper";
 import GameInfos from "@/app/components/game/panel/GameInfos";
 import GameWaiting from "@/app/components/game/panel/GameWaiting";
 import GameLayout from "@/app/components/game/GameLayout";
-import { GameState, Move, Player } from "@/app/types/game";
+import { ChatMessage, GameOverEvent, GameState, Move, MoveEvent, StartEvent } from "@/app/types/game";
 import Swal from "sweetalert2";
-import {getGameResult, handleGameOver} from "@/app/games/utils/gameUtils";
-import { createAudioController, AudioController } from '@/lib/audio';
+import { handleGameOver } from "@/app/games/utils/gameUtils";
+import { AudioController, createAudioController } from "@/lib/audio";
 
 interface GameBoardProps {
     initialGame: GameState;
+}
+
+type Color = "w" | "b";
+type Clocks = { white: number | null; black: number | null };
+
+const CLOCK_TICK_MS = 250;
+const POLL_INTERVAL_MS = 5000;
+const MAX_BOT_RETRIES = 3;
+
+function turnOf(fen: string): Color {
+    return fen.split(" ")[1] === "b" ? "b" : "w";
+}
+
+/** Returns the state with the move applied; a no-op when the move is already known (echo of our own move). */
+function withMove(prev: GameState, move: Move): GameState {
+    if (prev.moves.some((m) => m.moveNumber === move.moveNumber)) return prev;
+    const captured = prev.capturedPieces;
+    const mover = turnOf(prev.currentFen);
+    return {
+        ...prev,
+        currentFen: move.fen,
+        moves: [...prev.moves, move],
+        capturedPieces: move.capturedPiece
+            ? {
+                white: mover === "w" ? [...captured.white, move.capturedPiece] : captured.white,
+                black: mover === "b" ? [...captured.black, move.capturedPiece] : captured.black,
+            }
+            : captured,
+    };
+}
+
+function escapeHtml(value: string) {
+    return value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
 const GameBoard: React.FC<GameBoardProps> = ({ initialGame }) => {
@@ -24,429 +57,330 @@ const GameBoard: React.FC<GameBoardProps> = ({ initialGame }) => {
     const router = useRouter();
 
     const [gameState, setGameState] = useState<GameState>(initialGame);
-    const [waiting, setWaiting] = useState(initialGame.status === "WAITING");
-    const [showMatchAnnouncement, setShowMatchAnnouncement] = useState(false);
-    const [matchAnnounced, setMatchAnnounced] = useState(false);
+    const [clocks, setClocks] = useState<Clocks>({ white: initialGame.whiteTimeLeft, black: initialGame.blackTimeLeft });
+    const [resetKey, setResetKey] = useState(0);
+    const [botFailures, setBotFailures] = useState(0);
 
-    const [whiteTimeLeft, setWhiteTimeLeft] = useState<number | null>(initialGame.whiteTimeLeft);
-    const [blackTimeLeft, setBlackTimeLeft] = useState<number | null>(initialGame.blackTimeLeft);
-
-    const socketRef = useRef<any>(null);
-    const joinRef = useRef(false);
-    const chessRef = useRef(new Chess(initialGame.currentFen));
-    const matchAnnouncementShownRef = useRef(false);
+    // The ref is the source of truth for event handlers; the state mirrors it for rendering.
     const gameStateRef = useRef<GameState>(initialGame);
-
+    const chessRef = useRef(new Chess(initialGame.currentFen));
     const audioCtrlRef = useRef<AudioController | null>(null);
+    const announcedRef = useRef(false);
+    const gameOverShownRef = useRef(false);
+    const joinRequestedRef = useRef(false);
+    const timeoutClaimedRef = useRef(false);
+    const postQueueRef = useRef<Promise<void>>(Promise.resolve());
 
-    const lastMoveByMeRef = useRef(false);
-    const timerIntervalRef = useRef<number | null>(null);
-    const lastTickRef = useRef<number | null>(null);
+    const isBotGame = !!initialGame.bot;
+    const isOnlineGame = !isBotGame;
+    const gameId = initialGame.id;
+    const initiallyFinished = initialGame.status === "FINISHED";
+
+    const turn = turnOf(gameState.currentFen);
+    const myColor: Color | null =
+        user?.id && gameState.playerWhite?.id === user.id ? "w"
+            : user?.id && gameState.playerBlack?.id === user.id ? "b"
+                : null;
+    const isParticipant = myColor !== null;
+    const inProgress = gameState.status === "IN_PROGRESS";
+    const canPlay = inProgress && myColor === turn;
+    const isBotTurn = isBotGame && inProgress && myColor !== null && turn !== myColor && botFailures < MAX_BOT_RETRIES;
+    const orientation: "white" | "black" = myColor === "b" ? "black" : "white";
+    const hasClock = clocks.white != null || clocks.black != null;
+
+    const updateGame = useCallback((fn: (prev: GameState) => GameState) => {
+        const next = fn(gameStateRef.current);
+        gameStateRef.current = next;
+        setGameState(next);
+    }, []);
 
     useEffect(() => {
-        // create audio controller on mount
         try {
             audioCtrlRef.current = createAudioController();
         } catch (e) {
-            console.warn('Audio init failed', e);
+            console.warn("Audio init failed", e);
         }
-
         return () => {
             try {
                 audioCtrlRef.current?.dispose();
                 audioCtrlRef.current = null;
-            } catch (e) {}
+            } catch {
+                // ignore
+            }
         };
     }, []);
 
     const playSound = useCallback((move: Move, startOrEnd?: string) => {
         try {
             const isCheck = chessRef.current.isCheck();
-            const isCastle = chessRef.current.get(move.to as Square)?.type === 'k' && (move.to === 'g1' || move.to === 'c1' || move.to === 'g8' || move.to === 'c8');
+            const isCastle =
+                chessRef.current.get(move.to as Square)?.type === "k" &&
+                (move.to === "g1" || move.to === "c1" || move.to === "g8" || move.to === "c8");
             audioCtrlRef.current?.playSound(move, { isCheck, isCastle, startOrEnd: startOrEnd as any });
-        } catch (e) {
+        } catch {
             // ignore
         }
     }, []);
 
-    const currentTurn = chessRef.current.turn() === "w" ? (gameState.playerWhite?.id || initialGame.bot?.id) : (gameState.playerBlack?.id || initialGame.bot?.id);
-    const [canPlay, setCanPlay] = useState(user?.id === currentTurn && gameState.status === "IN_PROGRESS");
+    const showGameOver = useCallback((result: string | undefined, winnerId: string | null | undefined) => {
+        if (gameOverShownRef.current || !result) return;
+        gameOverShownRef.current = true;
+        const gs = gameStateRef.current;
+        const winner = [gs.playerWhite, gs.playerBlack, gs.bot].find((p) => p && p.id === winnerId);
+        playSound({} as Move, "END");
+        handleGameOver({ result, winnerName: winner?.username, router });
+    }, [playSound, router]);
 
-    const isBotGame = !!initialGame.bot;
-    const isOnlineGame = !isBotGame;
-    const orientation: "white" | "black" = user?.id === gameState.playerBlack?.id ? "black" : "white";
-    const isBotTurn = isBotGame && currentTurn === initialGame.bot?.id;
+    /** Replaces the local game with the server's version. */
+    const applyServerState = useCallback((gs: GameState, force = false) => {
+        const cur = gameStateRef.current;
+        const stale = cur.status !== "WAITING" && gs.status !== "FINISHED" && gs.moves.length < cur.moves.length;
+        if (stale && !force) return;
 
-    const onGameOver = useCallback((data: { result: string; finalFen: string }) => {
-        setGameState((prev) => ({
-            ...prev,
-            status: "FINISHED",
-            result: data.result,
-            currentFen: data.finalFen,
-        }));
+        updateGame(() => gs);
+        chessRef.current = new Chess(gs.currentFen);
+        setClocks({ white: gs.whiteTimeLeft, black: gs.blackTimeLeft });
+        setResetKey((k) => k + 1);
+        if (gs.status === "FINISHED") showGameOver(gs.result, gs.winnerId);
+    }, [updateGame, showGameOver]);
 
+    const resync = useCallback(async (force = false) => {
         try {
-            chessRef.current.load(data.finalFen);
+            const res = await fetch(`/api/games/${gameId}`, { cache: "no-store" });
+            if (!res.ok) return;
+            const data = await res.json();
+            applyServerState(data.game, force);
+        } catch (e) {
+            console.warn("Resync failed", e);
+        }
+    }, [gameId, applyServerState]);
+
+    const handleGameOverEvent = useCallback((ev: GameOverEvent) => {
+        updateGame((prev) => ({ ...prev, status: "FINISHED", result: ev.result, winnerId: ev.winnerId, currentFen: ev.finalFen }));
+        try {
+            chessRef.current = new Chess(ev.finalFen);
         } catch (e) {
             console.error("Failed to load final FEN:", e);
         }
+        setClocks({ white: ev.whiteTimeLeft, black: ev.blackTimeLeft });
+        showGameOver(ev.result, ev.winnerId);
+    }, [updateGame, showGameOver]);
 
-        playSound({} as Move, "END");
-        handleGameOver({
-            chess: chessRef.current,
-            playerWhite: gameState.playerWhite,
-            playerBlack: gameState.playerBlack,
-            router,
-        });
-    }, [gameState.playerBlack, gameState.playerWhite, playSound, router]);
+    const handleRemoteMove = useCallback((ev: MoveEvent) => {
+        const cur = gameStateRef.current;
+        if (cur.moves.some((m) => m.moveNumber === ev.moveNumber)) return; // echo of our own move
+        if (ev.moveNumber !== cur.moves.length + 1) {
+            void resync(true); // missed a move
+            return;
+        }
+        updateGame((prev) => withMove(prev, ev));
+        try {
+            chessRef.current = new Chess(ev.fen);
+        } catch {
+            void resync(true);
+            return;
+        }
+        setClocks({ white: ev.whiteTimeLeft, black: ev.blackTimeLeft });
+        playSound(ev);
+    }, [updateGame, resync, playSound]);
 
+    const addChatMessage = useCallback((message: ChatMessage) => {
+        updateGame((prev) =>
+            prev.chatMessages?.some((m) => m.id && m.id === message.id)
+                ? prev
+                : { ...prev, chatMessages: [...(prev.chatMessages ?? []), message] }
+        );
+    }, [updateGame]);
+
+    // Latest handlers, so the Pusher subscription does not have to be re-created on every render.
+    const handlersRef = useRef({ handleRemoteMove, handleGameOverEvent, addChatMessage, applyServerState, resync });
     useEffect(() => {
-        if (!user?.id) return;
+        handlersRef.current = { handleRemoteMove, handleGameOverEvent, addChatMessage, applyServerState, resync };
+    });
 
-        if (gameState.status === "FINISHED") {
-            playSound({} as Move, "END");
-            handleGameOver({
-                chess: chessRef.current,
-                playerWhite: gameState.playerWhite,
-                playerBlack: gameState.playerBlack,
-                router,
-            });
-            return;
-        }
+    // Join a waiting game opened through its code/link
+    useEffect(() => {
+        if (!user?.id || isBotGame || gameState.status !== "WAITING" || isParticipant || joinRequestedRef.current) return;
+        joinRequestedRef.current = true;
 
-        if (isBotGame) {
-            if (gameState.status === "IN_PROGRESS" && !matchAnnouncementShownRef.current) {
-                setShowMatchAnnouncement(true);
-                setMatchAnnounced(true);
-                matchAnnouncementShownRef.current = true;
-                playSound({} as Move, "START");
-            }
-            return;
-        }
-
-        const socket = getSocket(user.id);
-        socketRef.current = socket;
-
-        if (!joinRef.current) {
-            joinRef.current = true;
-            socket.emit("join", { gameId: gameState.id, userId: user.id });
-        }
-
-        const onWaiting = () => {
-            console.log("Waiting for opponent...");
-            setWaiting(true);
-        };
-
-        const onStart = (data: {
-            playerWhite: Player;
-            playerBlack: Player;
-            gameState: GameState;
-        }) => {
-            setWaiting(false);
-            setGameState(data.gameState);
-
-            const chess = new Chess();
-            data.gameState.moves.forEach((move) => {
-                chess.move({
-                    from: move.from,
-                    to: move.to,
-                    promotion: move.promotion,
-                });
-            });
-            chessRef.current = chess;
-
-            setWhiteTimeLeft(data.gameState.whiteTimeLeft ?? null);
-            setBlackTimeLeft(data.gameState.blackTimeLeft ?? null);
-
-            const currentTurn = chess.turn() === "w" ? data.gameState.playerWhite?.id : data.gameState.playerBlack?.id;
-            setCanPlay(user.id === currentTurn);
-
-            if (!matchAnnouncementShownRef.current && !matchAnnounced) {
-                setShowMatchAnnouncement(true);
-                setMatchAnnounced(true);
-                matchAnnouncementShownRef.current = true;
-            }
-        };
-
-        const onMove = (move: Move) => {
-            console.log("Received move:", move);
-
+        (async () => {
             try {
-                setGameState((prev) => ({
-                    ...prev,
-                    currentFen: move.fen,
-                    moves: [...prev.moves, move],
-                    capturedPieces: {
-                        white: move.capturedPiece && chessRef.current.turn() === "w"
-                            ? [...prev.capturedPieces.white, move.capturedPiece]
-                            : prev.capturedPieces.white,
-                        black: move.capturedPiece && chessRef.current.turn() === "b"
-                            ? [...prev.capturedPieces.black, move.capturedPiece]
-                            : prev.capturedPieces.black,
-                    },
-                }));
-                try {
-                    chessRef.current.load(move.fen);
-                } catch (e) {
-                    console.warn('Failed to load FEN on onMove', e);
-                }
-                lastTickRef.current = Date.now();
-                const currentTurn = chessRef.current.turn() === "w" ? gameStateRef.current.playerWhite?.id : gameStateRef.current.playerBlack?.id;
-                if (user.id === currentTurn && gameStateRef.current.status === "IN_PROGRESS") setCanPlay(true);
-
-                playSound(move);
-            } catch (e) {
-                console.error("Failed to apply move:", e);
+                const res = await fetch(`/api/games/${gameId}/join`, { method: "POST" });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || "Impossible de rejoindre la partie");
+                applyServerState(data.game, true);
+            } catch (e: any) {
+                await Swal.fire("Erreur", e?.message || "Impossible de rejoindre la partie", "error");
+                router.push("/");
             }
-        };
+        })();
+    }, [user?.id, isBotGame, gameState.status, isParticipant, gameId, applyServerState, router]);
 
-        const onError = (message: string) => {
-            console.error("Socket error:", message);
-            Swal.fire("Error", message, "error");
-        };
+    // Real-time channel (online games only): the server publishes, the client listens.
+    useEffect(() => {
+        if (!isOnlineGame || !user?.id || !isParticipant || initiallyFinished) return;
 
-        socket.on("waiting", onWaiting);
-        socket.on("start", onStart);
-        socket.on("move", onMove);
-        socket.on("gameOver", onGameOver);
-        socket.on("error", onError);
+        let pusher;
+        try {
+            pusher = getPusherClient();
+        } catch (e) {
+            console.error("Real-time unavailable, falling back to polling", e);
+            return;
+        }
+        const name = gameChannelName(gameId);
+        const channel = pusher.subscribe(name);
+
+        // Fires on the first subscription and after every automatic re-subscription following a reconnect.
+        channel.bind("pusher:subscription_succeeded", () => void handlersRef.current.resync());
+        channel.bind("start", (data: StartEvent) => handlersRef.current.applyServerState(data.gameState, true));
+        channel.bind("move", (data: MoveEvent) => handlersRef.current.handleRemoteMove(data));
+        channel.bind("gameOver", (data: GameOverEvent) => handlersRef.current.handleGameOverEvent(data));
+        channel.bind("message", (data: ChatMessage) => handlersRef.current.addChatMessage(data));
 
         return () => {
-            socket.off("waiting", onWaiting);
-            socket.off("start", onStart);
-            socket.off("move", onMove);
-            socket.off("gameOver", onGameOver);
-            socket.off("error", onError);
+            channel.unbind_all();
+            pusher.unsubscribe(name);
         };
-    }, [user?.id, isBotGame, gameState.id, onGameOver, matchAnnounced, gameState.playerWhite, gameState.playerBlack, gameState.status, router, playSound]);
+    }, [isOnlineGame, user?.id, isParticipant, initiallyFinished, gameId]);
 
+    // Safety net: poll while waiting for an opponent or when the real-time connection is down.
     useEffect(() => {
-        if (!showMatchAnnouncement) return;
+        if (!isOnlineGame || !isParticipant || initiallyFinished) return;
+        const id = setInterval(() => {
+            if (document.hidden || gameStateRef.current.status === "FINISHED") return;
+            let connected = false;
+            try {
+                connected = getPusherClient().connection.state === "connected";
+            } catch {
+                // not configured: poll
+            }
+            if (gameStateRef.current.status === "WAITING" || !connected) void handlersRef.current.resync();
+        }, POLL_INTERVAL_MS);
+        return () => clearInterval(id);
+    }, [isOnlineGame, isParticipant, initiallyFinished]);
 
-        const playerWhite = gameState.playerWhite?.username || "Bot";
-        const playerBlack = gameState.playerBlack?.username || "Bot";
-        const botName = gameState.bot?.username;
+    // Match announcement
+    useEffect(() => {
+        if (!user?.id || !isParticipant || announcedRef.current) return;
+        if (gameState.status !== "IN_PROGRESS" || gameState.moves.length > 0) return;
+        announcedRef.current = true;
 
-        const whiteName = gameState.playerWhite ? playerWhite : botName;
-        const blackName = gameState.playerBlack ? playerBlack : botName;
-
+        const whiteName = gameState.playerWhite?.username ?? gameState.bot?.username ?? "Bot";
+        const blackName = gameState.playerBlack?.username ?? gameState.bot?.username ?? "Bot";
         playSound({} as Move, "START");
-        Swal.fire({
+        void Swal.fire({
             title: "Match starts!",
-            html: `<b>${whiteName}</b> (White) vs <b>${blackName}</b> (Black)`,
+            html: `<b>${escapeHtml(whiteName)}</b> (White) vs <b>${escapeHtml(blackName)}</b> (Black)`,
             timer: 2000,
             timerProgressBar: true,
             showConfirmButton: false,
-        }).then(() => {
-            setShowMatchAnnouncement(false);
         });
-    }, [showMatchAnnouncement, gameState.playerWhite, gameState.playerBlack, gameState.bot, playSound]);
+    }, [user?.id, isParticipant, gameState.status, gameState.moves.length, gameState.playerWhite, gameState.playerBlack, gameState.bot, playSound]);
 
-    const handleMove = useCallback(
-        async (move: Move, isBotMove: boolean) => {
-            if (gameState.status === "FINISHED") return;
-            if (isOnlineGame && !canPlay) return;
-
-            const moveNumber = gameState.moves.length + 1;
-            const completeMove: Move = {
-                ...move,
-                moveNumber
-            };
-
-            if (isBotGame) {
-                try {
-                    setCanPlay(false);
-                    const chess = new Chess(move.fen);
-                    const isGameOver = chess.isGameOver();
-                    let result;
-
-                    if (isGameOver) {
-                        result = getGameResult(chess);
-                        handleGameOver({
-                            chess,
-                            playerWhite: gameState.playerWhite,
-                            playerBlack: gameState.playerBlack,
-                            router,
-                        });
-                    }
-
-                    const res = await fetch(`/api/games/${gameState.id}/move`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ move: completeMove, isGameOver, result, userPlayingId: isBotMove ? initialGame.bot?.id : user?.id }),
-                    });
-
-                    const data = await res.json();
-                    if (!res.ok) {
-                        throw new Error(data.error || "Erreur serveur");
-                    }
-
-                    setGameState((prev) => ({
-                        ...prev,
-                        currentFen: move.fen,
-                        moves: [...prev.moves, completeMove],
-                        capturedPieces: {
-                            white: move.capturedPiece && chessRef.current.turn() === "w"
-                                ? [...prev.capturedPieces.white, move.capturedPiece]
-                                : prev.capturedPieces.white,
-                            black: move.capturedPiece && chessRef.current.turn() === "b"
-                                ? [...prev.capturedPieces.black, move.capturedPiece]
-                                : prev.capturedPieces.black,
-                        },
-                    }));
-                    try { chessRef.current.load(move.fen); } catch {}
-                    lastTickRef.current = Date.now();
-
-                    playSound(move);
-
-                    if (isBotMove) {
-                        setCanPlay(true);
-                    }
-                } catch (err: any) {
-                    console.error("Failed to save bot move:", err);
-                    chessRef.current.load(gameState.currentFen);
-                    setGameState((prev) => ({ ...prev, currentFen: gameState.currentFen }));
-                    Swal.fire("Error", err?.message || "Erreur serveur", "error");
-                }
-            } else {
-                lastMoveByMeRef.current = true;
-                setGameState((prev) => ({
-                    ...prev,
-                    currentFen: move.fen,
-                    moves: [...prev.moves, completeMove],
-                    capturedPieces: {
-                        white: move.capturedPiece && chessRef.current.turn() === "w"
-                            ? [...prev.capturedPieces.white, move.capturedPiece]
-                            : prev.capturedPieces.white,
-                        black: move.capturedPiece && chessRef.current.turn() === "b"
-                            ? [...prev.capturedPieces.black, move.capturedPiece]
-                            : prev.capturedPieces.black,
-                    },
-                }));
-
-                try {
-                    chessRef.current.load(move.fen);
-                } catch (e) {
-                    console.warn('Failed to load FEN after local move', e);
-                }
-
-                playSound(move);
-                lastTickRef.current = Date.now();
-
-                socketRef.current?.emit("move", {
-                    gameId: gameState.id,
-                    move: completeMove,
-                    userId: user?.id,
-                    timeLeft: chessRef.current.turn() === "w" ? whiteTimeLeft : blackTimeLeft,
-                });
-
-                setCanPlay(false);
-            }
-        },
-        [gameState.status, gameState.moves.length, gameState.id, gameState.playerWhite, gameState.playerBlack, gameState.currentFen, isOnlineGame, canPlay, isBotGame, initialGame.bot?.id, user?.id, playSound, router, whiteTimeLeft, blackTimeLeft]
-    );
-
-    useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
-
+    // Finished game opened directly
     useEffect(() => {
-        const hasWhite = whiteTimeLeft != null;
-        const hasBlack = blackTimeLeft != null;
-        if (!hasWhite && !hasBlack) return;
+        if (initiallyFinished) showGameOver(initialGame.result, initialGame.winnerId);
+    }, [initiallyFinished, initialGame.result, initialGame.winnerId, showGameOver]);
 
-        if (gameState.status !== 'IN_PROGRESS') return;
+    const submitMove = useCallback(async (move: Move, asBot: boolean) => {
+        try {
+            const res = await fetch(`/api/games/${gameId}/move`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ from: move.from, to: move.to, promotion: move.promotion, asBot }),
+            });
+            const data = await res.json().catch(() => ({}));
 
-        if (!lastTickRef.current) lastTickRef.current = Date.now();
+            if (res.ok) {
+                setClocks({ white: data.move.whiteTimeLeft, black: data.move.blackTimeLeft });
+                if (asBot) setBotFailures(0);
+                if (data.gameOver) handleGameOverEvent(data.gameOver);
+                return;
+            }
+            if (data.gameOver) {
+                handleGameOverEvent(data.gameOver);
+                return;
+            }
+            if (asBot) setBotFailures((n) => n + 1);
+            await resync(true);
+            if (res.status !== 409) {
+                await Swal.fire("Erreur", data.error || "Erreur serveur", "error");
+            }
+        } catch (e) {
+            console.error("Failed to submit move:", e);
+            if (asBot) setBotFailures((n) => n + 1);
+            await resync(true);
+        }
+    }, [gameId, handleGameOverEvent, resync]);
 
-        const tick = () => {
+    const handleMove = useCallback((move: Move, isBotMove: boolean) => {
+        const cur = gameStateRef.current;
+        if (cur.status !== "IN_PROGRESS" || !move.fen) return;
+
+        // Optimistic update; the server stays authoritative and we resync if it disagrees.
+        const completeMove: Move = { ...move, moveNumber: cur.moves.length + 1 };
+        updateGame((prev) => withMove(prev, completeMove));
+        try {
+            chessRef.current = new Chess(move.fen);
+        } catch {
+            // keep the previous position, the server answer will resync us
+        }
+        playSound(move);
+
+        // Serialised so a slow request can never be overtaken by the next one (e.g. human move, then bot reply).
+        postQueueRef.current = postQueueRef.current.then(() => submitMove(completeMove, isBotMove));
+    }, [updateGame, playSound, submitMove]);
+
+    // Local clock display; the server owns the real clocks and sends exact values with every move.
+    useEffect(() => {
+        if (gameState.status !== "IN_PROGRESS" || !hasClock) return;
+        let last = Date.now();
+        const key = turn === "w" ? "white" : "black";
+        const id = setInterval(() => {
             const now = Date.now();
-            const last = lastTickRef.current ?? now;
             const delta = now - last;
-            lastTickRef.current = now;
+            last = now;
+            setClocks((prev) => {
+                const current = prev[key];
+                if (current == null || current <= 0) return prev;
+                return { ...prev, [key]: Math.max(0, current - delta) };
+            });
+        }, CLOCK_TICK_MS);
+        return () => clearInterval(id);
+    }, [gameState.status, hasClock, turn]);
 
-            const side = chessRef.current.turn();
-            if (side === 'w' && whiteTimeLeft != null) {
-                setWhiteTimeLeft((prev) => {
-                    const next = (prev ?? 0) - delta;
-                    if (next <= 0) {
-                        clearInterval(timerIntervalRef.current ?? undefined);
-                        timerIntervalRef.current = null;
-                        setGameState((prevState) => ({ ...prevState, status: 'FINISHED', result: 'TIMEOUT', currentFen: chessRef.current.fen() }));
-                        (async () => {
-                            try {
-                                const gs = gameStateRef.current;
-                                if (gs.status === 'FINISHED') return;
+    // When our local clock hits zero, ask the server to confirm the timeout.
+    const remainingOfSideToMove = turn === "w" ? clocks.white : clocks.black;
+    useEffect(() => {
+        if (!isParticipant || gameState.status !== "IN_PROGRESS") return;
+        if (remainingOfSideToMove == null || remainingOfSideToMove > 0) {
+            timeoutClaimedRef.current = false;
+            return;
+        }
+        if (timeoutClaimedRef.current) return;
+        timeoutClaimedRef.current = true;
 
-                                const res = await fetch(`/api/games/${gs.id}`, {
-                                    method: 'PUT',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ result: 'TIMEOUT', winnerId: gs.playerBlack ? gs.playerBlack.id : gs.bot?.id }),
-                                });
-
-                                if (!res.ok) {
-                                    const err = await res.json().catch(() => ({}));
-                                    console.error('Failed to notify server about timeout (black wins):', err);
-                                }
-
-                                handleGameOver({ chess: chessRef.current, playerWhite: gs.playerWhite, playerBlack: gs.playerBlack ? gs.playerBlack : gs.bot, router });
-                            } catch (e) {
-                                console.error('Error while notifying server about timeout (black wins):', e);
-                            }
-                        })();
-                        return 0;
-                    }
-                    return next;
-                });
-            } else if (side === 'b' && blackTimeLeft != null) {
-                setBlackTimeLeft((prev) => {
-                    const next = (prev ?? 0) - delta;
-                    if (next <= 0) {
-                        clearInterval(timerIntervalRef.current ?? undefined);
-                        timerIntervalRef.current = null;
-                        setGameState((prevState) => ({ ...prevState, status: 'FINISHED', result: 'TIMEOUT', currentFen: chessRef.current.fen() }));
-                        (async () => {
-                            try {
-                                const gs = gameStateRef.current;
-                                if (gs.status === 'FINISHED') return;
-
-                                const res = await fetch(`/api/games/${gs.id}`, {
-                                    method: 'PUT',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ winnerId: gs.playerWhite ? gs.playerWhite.id : gs.bot?.id, result: 'TIMEOUT' }),
-                                });
-
-                                if (!res.ok) {
-                                    const err = await res.json().catch(() => ({}));
-                                    console.error('Failed to notify server about timeout (white wins):', err);
-                                }
-
-                                handleGameOver({ chess: chessRef.current, playerWhite: gs.playerWhite ? gs.playerWhite : gs.bot, playerBlack: gs.playerBlack, router });
-                            } catch (e) {
-                                console.error('Error while notifying server about timeout (white wins):', e);
-                            }
-                        })();
-                        return 0;
-                    }
-                    return next;
-                });
+        (async () => {
+            try {
+                const res = await fetch(`/api/games/${gameId}/timeout`, { method: "POST" });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.gameOver) {
+                    handleGameOverEvent(data.gameOver);
+                    return;
+                }
+                await resync(true);
+            } catch (e) {
+                console.error("Timeout claim failed:", e);
             }
-        };
+            // The server clock may be slightly ahead of ours: allow another attempt.
+            setTimeout(() => {
+                timeoutClaimedRef.current = false;
+            }, 1500);
+        })();
+    }, [isParticipant, gameState.status, remainingOfSideToMove, gameId, handleGameOverEvent, resync]);
 
-        if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-        timerIntervalRef.current = window.setInterval(tick, 500);
-
-        return () => {
-            if (timerIntervalRef.current) {
-                clearInterval(timerIntervalRef.current);
-                timerIntervalRef.current = null;
-            }
-            lastTickRef.current = null;
-        };
-    }, [gameState.status, whiteTimeLeft, blackTimeLeft, router]);
-
-    if (isOnlineGame && waiting) {
-        return (
-            <GameLayout gamePanel={<GameWaiting value={initialGame.code || ""} />} />
-        );
+    if (isOnlineGame && gameState.status === "WAITING") {
+        return <GameLayout gamePanel={<GameWaiting value={gameState.code || ""} />} />;
     }
 
     return (
@@ -461,6 +395,7 @@ const GameBoard: React.FC<GameBoardProps> = ({ initialGame }) => {
                     isOnline={isOnlineGame}
                     botElo={initialGame.bot?.elo}
                     isBotTurn={isBotTurn}
+                    resetKey={resetKey}
                 />
             }
             gamePanel={
@@ -471,14 +406,14 @@ const GameBoard: React.FC<GameBoardProps> = ({ initialGame }) => {
                     user={user}
                     moves={gameState.moves}
                     chatMessages={gameState.chatMessages || []}
-                    socket={socketRef.current}
+                    onChatMessage={addChatMessage}
                 />
             }
             isGameStarted={true}
             capturedPieces={gameState.capturedPieces}
-            playerPlaying={chessRef.current.turn() === "w" ? "w" : "b"}
-            whiteTimeLeft={whiteTimeLeft}
-            blackTimeLeft={blackTimeLeft}
+            playerPlaying={turn}
+            whiteTimeLeft={clocks.white}
+            blackTimeLeft={clocks.black}
         />
     );
 };

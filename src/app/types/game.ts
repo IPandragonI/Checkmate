@@ -40,7 +40,7 @@ export interface Move {
     capturedPiece?: string;
     fen: string;
     moveNumber?: number;
-    timestamp?: Date;
+    timestamp?: Date | string;
 }
 
 export interface CapturedPieces {
@@ -53,6 +53,7 @@ export interface GameState {
     code: string;
     status: 'WAITING' | 'IN_PROGRESS' | 'FINISHED';
     result?: string;
+    winnerId?: string | null;
     currentFen: string;
     moves: Move[];
     capturedPieces: CapturedPieces;
@@ -84,28 +85,29 @@ export interface Bot {
 }
 
 export interface ChatMessage {
+    id?: string;
     userId: string;
     message: string;
-    sentAt: Date;
+    sentAt: Date | string;
 }
 
-export interface ServerToClientEvents {
-    waiting: () => void;
-    start: (data: {
-        playerWhite: Player;
-        playerBlack: Player;
-        gameState: GameState;
-    }) => void;
-    move: (move: Move) => void;
-    gameOver: (data: { result: string; finalFen: string }) => void;
-    messageReceived: (msg: ChatMessage) => void;
-    error: (message: string) => void;
+/** Payloads published on the private-game-<id> Pusher channel. */
+export interface StartEvent {
+    gameState: GameState;
 }
 
-export interface ClientToServerEvents {
-    join: (data: { gameId: string; userId: string }) => void;
-    move: (data: { gameId: string; move: Move, userId: string; timeLeft: number }) => void;
-    messageSend: (data: { gameId: string; chatMessage: ChatMessage }) => void;
+export interface MoveEvent extends Move {
+    moveNumber: number;
+    whiteTimeLeft: number | null;
+    blackTimeLeft: number | null;
+}
+
+export interface GameOverEvent {
+    result: string;
+    winnerId: string | null;
+    finalFen: string;
+    whiteTimeLeft: number | null;
+    blackTimeLeft: number | null;
 }
 
 export const WEIGHT: Record<string, number> = {

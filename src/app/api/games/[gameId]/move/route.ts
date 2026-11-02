@@ -1,34 +1,43 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { GameService } from "@/server/services/gameServices";
+import { publishGameEvents, type GameEvent } from "@/lib/pusher-server";
+import { fail, getUserFromRequest, parseJson, unauthorized } from "@/app/api/utils/http";
 
-export async function POST(
-    request: NextRequest,
-    { params }: { params: Promise<{ gameId: string }> }
-) {
+const square = z.string().regex(/^[a-h][1-8]$/, "Case invalide");
+const schema = z.object({
+    from: square,
+    to: square,
+    promotion: z.enum(["q", "r", "b", "n"]).nullish().transform((v) => v ?? undefined),
+    asBot: z.boolean().optional(),
+});
+
+export async function POST(req: NextRequest, context: { params: Promise<{ gameId: string }> }) {
+    const user = await getUserFromRequest();
+    if (!user?.id) return unauthorized();
+
+    const { gameId } = await context.params;
+    const parsed = await parseJson(req, schema);
+    if (!parsed.ok) return parsed.res;
+
     try {
-        const resolved = await params;
-        const gameId = resolved.gameId;
-        const { move, isGameOver, result, userPlayingId } = await request.json();
+        const result = await GameService.applyMove(gameId, user.id, parsed.data);
 
-        const gameState = await GameService.getGameState(gameId);
-        if (!gameState) {
-            return NextResponse.json({ error: "Game not found" }, { status: 404 });
+        if (!result.ok) {
+            if (result.gameOver && !result.isBotGame) {
+                await publishGameEvents(gameId, [{ name: "gameOver", data: result.gameOver }]);
+            }
+            return NextResponse.json({ error: result.error, gameOver: result.gameOver }, { status: result.status });
         }
 
-        if (!gameState.bot) {
-            return NextResponse.json({ error: "Not a bot game" }, { status: 400 });
+        if (!result.isBotGame) {
+            const events: GameEvent[] = [{ name: "move", data: result.move }];
+            if (result.gameOver) events.push({ name: "gameOver", data: result.gameOver });
+            await publishGameEvents(gameId, events);
         }
-
-        await GameService.saveMove(gameId, move);
-        if (isGameOver) {
-            await GameService.finishGame(gameId, result, userPlayingId);
-        }
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ move: result.move, gameOver: result.gameOver });
     } catch (error) {
-        console.error("Error in bot move:", error);
-        return NextResponse.json(
-            { error: "Internal server error" },
-            { status: 500 }
-        );
+        console.error("Error applying move:", error);
+        return fail("Erreur serveur", 500);
     }
 }

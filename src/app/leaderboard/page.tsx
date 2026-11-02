@@ -13,6 +13,7 @@ export default function LeaderboardPage() {
     const [gamesToday, setGamesToday] = useState(0);
     const [gamesInProgress, setGamesInProgress] = useState(0);
     const [loading, setLoading] = useState(true);
+    const [totalPlayers, setTotalPlayers] = useState(0);
 
     useEffect(() => {
         if (!session?.user?.id) return;
@@ -24,6 +25,7 @@ export default function LeaderboardPage() {
                 setUsers(data.users);
                 setGamesToday(data.counts.gamesToday);
                 setGamesInProgress(data.counts.inProgress);
+                setTotalPlayers(data.counts.players);
                 setLoading(false);
             });
     }, [session?.user?.id]);
@@ -52,7 +54,7 @@ export default function LeaderboardPage() {
                                 </svg>
                             </div>
                             <div className="stat-title">Nombre de joueurs</div>
-                            <div className="stat-value">{users.length}</div>
+                            <div className="stat-value">{totalPlayers}</div>
                             <div className="stat-desc">↗︎ 12 (4%)</div>
                         </div>
 

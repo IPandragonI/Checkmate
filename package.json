@@ -1,53 +1,46 @@
 {
   "name": "checkmate",
   "version": "0.1.0",
-  "description": "A real-time multiplayer chess application",
+  "description": "An online multiplayer chess application",
   "author": "Mathys Farineau",
   "license": "MIT",
   "private": true,
   "scripts": {
-    "dev": "tsx watch server.ts",
-    "build": "next build",
-    "start": "NODE_ENV=production tsx server.ts",
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
     "lint": "eslint",
     "seed": "tsx prisma/seed.ts",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "postinstall": "prisma generate"
   },
   "type": "module",
   "dependencies": {
     "@prisma/client": "^6.17.0",
-    "@prisma/extension-accelerate": "^2.0.2",
-    "bcrypt": "^6.0.0",
     "better-auth": "1.4.2",
     "chess.js": "^1.4.0",
-    "chessboardjs": "^0.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.544.0",
     "next": "^15.5.7",
-    "next-auth": "^4.24.11",
-    "node-fetch": "^2.7.0",
-    "nodemailer": "^7.0.7",
-    "picomatch": "^2.3.1",
+    "pusher": "^5.3.4",
+    "pusher-js": "^8.6.0",
     "react": "19.1.2",
     "react-chessboard": "^5.6.1",
     "react-dom": "19.1.2",
     "recharts": "^2.5.0",
     "resend": "^6.5.2",
-    "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1",
     "sweetalert2": "^11.24.0",
     "tailwind-merge": "^3.3.1",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
-    "@types/bcrypt": "^6.0.0",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.19",
-    "@types/nodemailer": "^7.0.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.21",
@@ -56,12 +49,13 @@
     "eslint-config-next": "15.5.4",
     "prisma": "^6.17.0",
     "tailwindcss": "^4",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
   },
   "browserslist": [
     "> 1%"
-  ]
+  ],
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  }
 }

@@ -1,32 +1,16 @@
-import {NextRequest, NextResponse} from "next/server";
-import {getUserFromRequest} from "@/app/api/utils/auth";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { fail, getUserFromRequest, unauthorized } from "@/app/api/utils/http";
 
+/** Looks up a joinable game by its access code. Only exposes what is needed to join. */
 export async function GET(req: NextRequest) {
     const user = await getUserFromRequest();
-    if (!user?.id) {
-        return NextResponse.json({error: "Non authentifié"}, {status: 401});
-    }
+    if (!user?.id) return unauthorized();
 
-    const {searchParams} = new URL(req.url);
-    const code = searchParams.get("code");
-    if (!code) {
-        return new Response(JSON.stringify({error: "Code requis"}), {status: 400});
-    }
-    const res = await prisma.game.findFirst({
-        where: {code},
-        include: {
-            playerWhite: {
-                select: {id: true, name: true},
-            },
-            playerBlack: {
-                select: {id: true, name: true},
-            },
-            bot: true,
-        },
-    });
-    if (!res) {
-        return new Response(JSON.stringify({error: "Partie introuvable"}), {status: 404});
-    }
-    return NextResponse.json(res, {status: 200});
+    const code = new URL(req.url).searchParams.get("code")?.trim().toUpperCase();
+    if (!code || code.length > 16) return fail("Code requis");
+
+    const game = await prisma.game.findUnique({ where: { code }, select: { id: true, status: true } });
+    if (!game) return fail("Partie introuvable", 404);
+    return NextResponse.json(game);
 }

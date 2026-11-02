@@ -1,25 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getUserFromRequest } from "@/app/api/utils/auth";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { fail, getUserFromRequest, parseJson, unauthorized } from "@/app/api/utils/http";
+
+const schema = z.object({ puzzleId: z.string().min(1).max(64), solved: z.boolean() });
 
 export async function POST(req: NextRequest) {
     const user = await getUserFromRequest();
-    if (!user?.id) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+    if (!user?.id) return unauthorized();
 
-    const body = await req.json().catch(() => ({}));
-    const { puzzleId, solved } = body
-    if (!puzzleId) return NextResponse.json({ error: "Id du puzzle manquant" }, { status: 400 });
+    const parsed = await parseJson(req, schema);
+    if (!parsed.ok) return parsed.res;
+    const { puzzleId, solved } = parsed.data;
 
-    const p = prisma as any;
+    const puzzle = await prisma.puzzle.findUnique({ where: { id: puzzleId }, select: { id: true } });
+    if (!puzzle) return fail("Puzzle introuvable", 404);
 
-    const puzzle = await p.puzzle.findUnique({ where: { id: puzzleId } });
-    if (!puzzle) return NextResponse.json({ error: "Puzzle introuvable" }, { status: 404 });
-
-    await p.userPuzzle.upsert({
+    await prisma.userPuzzle.upsert({
         where: { userId_puzzleId: { userId: user.id, puzzleId } },
-        update: { attempts: { increment: 1 }, solved: solved, lastAttemptAt: new Date() },
-        create: { userId: user.id, puzzleId: puzzleId, attempts: 1, solved: solved, lastAttemptAt: new Date() }
+        update: { attempts: { increment: 1 }, solved, lastAttemptAt: new Date() },
+        create: { userId: user.id, puzzleId, attempts: 1, solved, lastAttemptAt: new Date() },
     });
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    return NextResponse.json({ success: true });
 }

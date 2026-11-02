@@ -1,64 +1,72 @@
 # Checkmate
 
-Checkmate is a turn-based online chess project developed as part of a Master 2 (M2) academic project. The goal of the project was to design and implement a multiplayer, turn-based game using WebSockets for real-time communication, with a focus on reliability (reconnection), persistence and simple AI opponents.
+Checkmate is a turn-based online chess application (Master 2 academic project): play against another player in real time, play against bots, solve puzzles, and track your Elo.
 
-## Technologies
+## Stack
 
-The application is built using a modern TypeScript/React/Next.js stack:
-- Next.js (app router) – React framework for the frontend and server integration
-- Socket.IO – WebSocket-like real-time communication between client and server
-- Prisma + PostgreSQL (or other supported DB) – ORM and persistence for games, moves and chats
-- chess.js – chess rules and FEN handling
-- react-chessboard / chessboard wrapper – board UI
-- BetterAuth – authentication
-- Tailwind CSS – styling
+- **Next.js 15** (App Router) — UI and API route handlers, deployable on Vercel (fully serverless)
+- **Pusher Channels** — real-time layer (server publishes, clients subscribe)
+- **Prisma + PostgreSQL** — persistence
+- **chess.js** — rules; the server validates every move
+- **Better Auth** — authentication
+- **Tailwind CSS + daisyUI** — styling
 
-## What is Checkmate?
+## Architecture
 
-Checkmate is a simple, turn-based chess application where users can:
-- Create a new game or join an existing game with a code
-- Play online against another human player in real-time
-- Play against built-in bots with configurable difficulty/ELO
+There is no long-lived server process. All state lives in PostgreSQL and every action is a short HTTP request:
 
-## Quick start (development)
+```
+Browser ── POST /api/games/:id/move ──▶ Route handler ─▶ GameService (validate, clocks, DB transaction)
+   ▲                                                         │
+   └────────── Pusher event on private-game-:id ◀────────────┘
+```
 
-1. Install dependencies:
+- `POST /api/games/create` creates a game (the access code is generated server-side).
+- `POST /api/games/:id/join` takes the free seat; the game starts when both seats are filled.
+- `POST /api/games/:id/move` — authorisation, turn, server-side clock, legality, persistence, game-over and Elo in one transaction (optimistic lock on the position).
+- `POST /api/games/:id/chat`, `POST /api/games/:id/timeout` (the server verifies the clock really expired).
+- `GET /api/games/:id` — full state, used by clients to resynchronise.
+- `POST /api/pusher/auth` — only the two players may subscribe to `private-game-:id`.
+
+Events published on the channel: `start`, `move`, `gameOver`, `message`. Clients dedupe by move number, resync on every (re)subscription, and poll as a fallback while waiting or if the real-time connection is down. Pusher is only a notification channel: if a message is lost, the database remains the source of truth.
+
+Bot games run the engine in the browser, but each move is still validated and persisted by the server, and a bot move is only accepted on the bot's turn.
+
+## Local development
 
 ```bash
 npm install
-```
-
-2. Create a database and configure your environment variables (for example in `.env`):
-- DATABASE_URL
-- NEXT_PUBLIC_SOCKET_URL (optional, defaults to http://localhost:3000)
-- BETTER_AUTH_SECRET (your BetterAuth secret key)
-- BETTER_AUTH_URL (your BetterAuth instance URL)
-
-3. Run database migrations and seed (if applicable):
-
-```bash
+cp .env.example .env          # fill in the values
+docker compose up -d          # PostgreSQL + MailHog (optional)
 npx prisma migrate dev
-npm run seed
+npm run seed                  # bots
+npm run dev                   # http://localhost:3000
 ```
 
-4. Start the development server (the project uses a custom `server.ts` that integrates Next.js and Socket.IO):
+You need a (free) Pusher Channels app: https://dashboard.pusher.com → create an app → copy the credentials into `.env`.
 
-```bash
-npm run dev
-```
+## Deploying on Vercel
 
-5. Open your browser at http://localhost:3000
+1. Create a **pooled** PostgreSQL database (Neon, Supabase pooler, Vercel Postgres…). Use the pooled URL as `DATABASE_URL` and the direct URL as `DIRECT_URL`.
+2. Create a Pusher Channels app (choose the cluster closest to your users).
+3. In the Vercel project settings, set all variables from `.env.example`. Set `BETTER_AUTH_URL` and `NEXT_PUBLIC_BASE_URL` to your production URL.
+4. Apply the migrations once from your machine (or CI) against the production database, then seed the bots:
+   ```bash
+   DATABASE_URL=<direct url> DIRECT_URL=<direct url> npx prisma migrate deploy
+   DATABASE_URL=<direct url> npm run seed
+   ```
+5. Deploy. `postinstall`/`build` run `prisma generate`.
 
-Notes:
-- The project exposes a custom server entry (`server.ts`) which starts Next.js and a Socket.IO server on the same process. In production you can run `npm run start` after building the app.
+The migration `20261102120000_hardening_clock_indexes` renumbers moves per game before adding a unique `(gameId, moveNumber)` constraint, so it is safe on existing data.
 
-## Project structure (high level)
+## Project structure
 
-- `src/` – front-end and API routes
-- `server.ts` – custom Next.js + Socket.IO server
-- `prisma/` – schema, migrations and seed script
-- `public/` – static assets (pieces, icons, images)
+- `src/app` — pages, components and API routes
+- `src/server/services/gameServices.ts` — game engine (rules, clocks, Elo)
+- `src/lib` — Prisma, auth, Pusher (server/client), email
+- `prisma/` — schema, migrations, seed
+- `public/` — static assets
 
 ## License
 
-This repository is provided for academic purposes. If you want to reuse the code publicly, please add a suitable open-source license (e.g. MIT) and attribute the original author.
+MIT

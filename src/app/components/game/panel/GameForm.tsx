@@ -1,39 +1,22 @@
 "use client";
 
 import BotSelector from "@/app/components/field/BotSelectorField";
-import {useEffect, useState} from "react";
+import {useState} from "react";
 import Swal from "sweetalert2";
 import {useRouter} from "next/navigation";
 import GameModeField from "@/app/components/field/GameModeField";
 import StartColorField from "@/app/components/field/StartColorField";
 import TimeModeField from "@/app/components/field/TimeModeField";
-import GameCodeField from "@/app/components/field/GameCodeField";
 import { timeModes } from '@/app/types/game';
-
-function generateAccessCode(length = 8) {
-    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let code = "";
-    for (let i = 0; i < length; i++) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return code;
-}
 
 const GameForm = () => {
     const [mode, setMode] = useState("online");
     const [color, setColor] = useState("white");
     const [timeLimit, setTimeLimit] = useState("10");
-    const [code, setCode] = useState("");
     const [loading, setLoading] = useState(false);
     const [botId, setBotId] = useState("");
     const [timeMode, setTimeMode] = useState("RAPID");
     const router = useRouter();
-
-    useEffect(() => {
-        if (mode === "online") {
-            setCode(generateAccessCode());
-        }
-    }, [mode]);
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -44,7 +27,6 @@ const GameForm = () => {
                 color,
                 timeLimit,
                 timeMode,
-                code,
             };
             if (mode === "bot") {
                 payload.botId = botId;
@@ -59,7 +41,7 @@ const GameForm = () => {
             router.push(`/games/${data.gameId}`);
             if (mode === "online") {
                 try {
-                    await navigator.clipboard.writeText(code);
+                    await navigator.clipboard.writeText(data.code);
                     await Swal.fire({
                         toast: true,
                         position: "top-end",
@@ -100,9 +82,6 @@ const GameForm = () => {
                                    const defaultValue = tm.options[0]?.value || "10";
                                    setTimeLimit(defaultValue);
                                }}/>
-                {mode === "online" &&
-                    <GameCodeField value={code}/>
-                }
             </div>
             <div>
                 <button className={`btn ${mode === 'bot' ? 'btn-secondary' : 'btn-primary'} w-full`} type="submit" disabled={loading || (mode === "bot" && !botId)}>

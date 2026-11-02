@@ -11,7 +11,13 @@ export const auth = betterAuth({
     emailAndPassword: {
         enabled: true,
     },
-    trustedOrigins: [process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'],
+    trustedOrigins: [
+        process.env.NEXT_PUBLIC_BASE_URL,
+        process.env.BETTER_AUTH_URL,
+        process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}`,
+        process.env.VERCEL_BRANCH_URL && `https://${process.env.VERCEL_BRANCH_URL}`,
+        process.env.NODE_ENV !== 'production' ? 'http://localhost:3000' : undefined,
+    ].filter((origin): origin is string => !!origin),
     plugins: [
         username({
             usernameNormalization: false
@@ -20,10 +26,8 @@ export const auth = betterAuth({
     emailVerification: {
         sendOnSignUp: true,
         sendVerificationEmail: async ({ user, url }) => {
-            if (process.env.NODE_ENV === 'production') {
-                url = url.replace(':3000', '');
-            }
-            Promise.race([
+            // Must be awaited: serverless functions are frozen once the response is sent.
+            await Promise.race([
                 sendEmail({
                     to: user.email,
                     subject: 'Verify your email address',
@@ -33,7 +37,6 @@ export const auth = betterAuth({
             ]).catch(err => {
                 console.error('Erreur envoi email:', err);
             });
-            return;
         }
     }
 })
